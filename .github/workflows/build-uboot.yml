@@ -1,0 +1,65 @@
+name: Build U-Boot for A40i (Rescue Mode)
+
+on:
+  workflow_dispatch:  # 允许手动点击按钮触发
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. 拉取最新的 U-Boot 官方源码
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+      with:
+        repository: u-boot/u-boot
+        ref: v2024.01  # 使用一个稳定的版本，避免开发版的不稳定
+        fetch-depth: 1
+
+    # 2. 安装交叉编译工具链和依赖
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-arm-linux-gnueabihf \
+          bison flex python3 python3-dev python3-setuptools swig \
+          libssl-dev bc device-tree-compiler
+
+    # 3. 配置 U-Boot (使用 Banana Pi M2 Berry 的配置，它是 A40i/V40 芯片)
+    - name: Configure U-Boot
+      run: |
+        # 使用 M2 Berry 的默认配置作为基础
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- bananapi_m2_berry_defconfig
+        
+        # --- 关键步骤：强制开启 USB Mass Storage (UMS) 功能 ---
+        # 这样你才能在 U-Boot 命令行里输入 'ums 0 mmc 1' 把板子变身成 U盘
+        echo "CONFIG_CMD_USB_MASS_STORAGE=y" >> .config
+        echo "CONFIG_USB_MUSB_GADGET=y" >> .config
+        echo "CONFIG_USB_GADGET=y" >> .config
+        echo "CONFIG_USB_GADGET_DOWNLOAD=y" >> .config
+        echo "CONFIG_USB_MUSB_SUNXI=y" >> .config
+        
+        # 更新配置
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+
+    # 4. 开始编译
+    - name: Build U-Boot
+      run: |
+        echo "Starting build..."
+        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
+        
+        # 检查生成的文件是否存在
+        if [ -f "u-boot-sunxi-with-spl.bin" ]; then
+          echo "Build Success! File found."
+        else
+          echo "Build Failed! File not found."
+          exit 1
+        fi
+
+    # 5. 上传编译好的文件供你下载
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: u-boot-a40i-rescue
+        path: u-boot-sunxi-with-spl.bin
