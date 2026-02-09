@@ -1,65 +1,81 @@
-name: Build U-Boot for A40i (Rescue Mode)
+name: Build U-Boot
 
 on:
-  workflow_dispatch:  # 允许手动点击按钮触发
+  workflow_dispatch:
   push:
     branches: [ "main", "master" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    # 1. 拉取最新的 U-Boot 官方源码
-    - name: Checkout Source Code
-      uses: actions/checkout@v4
-      with:
-        repository: u-boot/u-boot
-        ref: v2024.01  # 使用一个稳定的版本，避免开发版的不稳定
-        fetch-depth: 1
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          repository: u-boot/u-boot
+          ref: v2024.01
 
-    # 2. 安装交叉编译工具链和依赖
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-arm-linux-gnueabihf \
-          bison flex python3 python3-dev python3-setuptools swig \
-          libssl-dev bc device-tree-compiler
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf bison flex python3 python3-dev python3-setuptools swig libssl-dev bc device-tree-compiler
 
-    # 3. 配置 U-Boot (使用 Banana Pi M2 Berry 的配置，它是 A40i/V40 芯片)
-    - name: Configure U-Boot
-      run: |
-        # 使用 M2 Berry 的默认配置作为基础
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- bananapi_m2_berry_defconfig
-        
-        # --- 关键步骤：强制开启 USB Mass Storage (UMS) 功能 ---
-        # 这样你才能在 U-Boot 命令行里输入 'ums 0 mmc 1' 把板子变身成 U盘
-        echo "CONFIG_CMD_USB_MASS_STORAGE=y" >> .config
-        echo "CONFIG_USB_MUSB_GADGET=y" >> .config
-        echo "CONFIG_USB_GADGET=y" >> .config
-        echo "CONFIG_USB_GADGET_DOWNLOAD=y" >> .config
-        echo "CONFIG_USB_MUSB_SUNXI=y" >> .config
-        
-        # 更新配置
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+      # ========================================================
+      # 方案 A: 基于 M2 Berry 修改 (降频版) - 推荐先试这个
+      # ========================================================
+      - name: Build Version A (Berry Safe 384MHz)
+        run: |
+          # 清理环境
+          make distclean
+          
+          # 加载基础配置
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- bananapi_m2_berry_defconfig
+          
+          # --- 核心修改：强制修改内存频率和参数 ---
+          # 将 DRAM 频率从默认的 480/576 强制降到 384MHz (非常保守的值)
+          sed -i 's/CONFIG_DRAM_CLK=.*/CONFIG_DRAM_CLK=384/' .config
+          
+          # 确保开启 UMS (U盘模式)
+          echo "CONFIG_CMD_USB_MASS_STORAGE=y" >> .config
+          echo "CONFIG_USB_MUSB_GADGET=y" >> .config
+          echo "CONFIG_USB_GADGET=y" >> .config
+          echo "CONFIG_USB_GADGET_DOWNLOAD=y" >> .config
+          echo "CONFIG_USB_MUSB_SUNXI=y" >> .config
+          
+          # 编译
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
+          
+          # 重命名保存
+          mv u-boot-sunxi-with-spl.bin u-boot-berry-safe-384.bin
 
-    # 4. 开始编译
-    - name: Build U-Boot
-      run: |
-        echo "Starting build..."
-        make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
-        
-        # 检查生成的文件是否存在
-        if [ -f "u-boot-sunxi-with-spl.bin" ]; then
-          echo "Build Success! File found."
-        else
-          echo "Build Failed! File not found."
-          exit 1
-        fi
+      # ========================================================
+      # 方案 B: 基于 M2 Ultra 修改 (备用方案)
+      # ========================================================
+      - name: Build Version B (Ultra Safe 360MHz)
+        run: |
+          make distclean
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- bananapi_m2_ultra_defconfig
+          
+          # Ultra 的默认频率更高，我们把它降到更低 360MHz
+          sed -i 's/CONFIG_DRAM_CLK=.*/CONFIG_DRAM_CLK=360/' .config
+          
+          # 确保开启 UMS
+          echo "CONFIG_CMD_USB_MASS_STORAGE=y" >> .config
+          echo "CONFIG_USB_MUSB_GADGET=y" >> .config
+          echo "CONFIG_USB_GADGET=y" >> .config
+          echo "CONFIG_USB_GADGET_DOWNLOAD=y" >> .config
+          echo "CONFIG_USB_MUSB_SUNXI=y" >> .config
+          
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
+          
+          mv u-boot-sunxi-with-spl.bin u-boot-ultra-safe-360.bin
 
-    # 5. 上传编译好的文件供你下载
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: u-boot-a40i-rescue
-        path: u-boot-sunxi-with-spl.bin
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: u-boot-safe-versions
+          path: |
+            u-boot-berry-safe-384.bin
+            u-boot-ultra-safe-360.bin
