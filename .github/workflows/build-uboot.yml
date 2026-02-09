@@ -20,22 +20,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf bison flex python3 python3-dev python3-setuptools swig libssl-dev bc device-tree-compiler
 
-      # ========================================================
-      # 方案 A: 基于 M2 Berry 修改 (降频版) - 推荐先试这个
-      # ========================================================
-      - name: Build Version A (Berry Safe 384MHz)
+      - name: Build Berry Safe Version (384MHz)
         run: |
-          # 清理环境
-          make distclean
-          
-          # 加载基础配置
+          # 配置 Banana Pi M2 Berry (A40i/V40)
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- bananapi_m2_berry_defconfig
           
-          # --- 核心修改：强制修改内存频率和参数 ---
-          # 将 DRAM 频率从默认的 480/576 强制降到 384MHz (非常保守的值)
+          # --- 核心修改：降频保平安 ---
+          # 强制将内存频率降到 384MHz (甚至更低 360 也行，这里先用 384)
           sed -i 's/CONFIG_DRAM_CLK=.*/CONFIG_DRAM_CLK=384/' .config
           
-          # 确保开启 UMS (U盘模式)
+          # 开启 UMS (U盘模式)
           echo "CONFIG_CMD_USB_MASS_STORAGE=y" >> .config
           echo "CONFIG_USB_MUSB_GADGET=y" >> .config
           echo "CONFIG_USB_GADGET=y" >> .config
@@ -46,36 +40,16 @@ jobs:
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
           
-          # 重命名保存
-          mv u-boot-sunxi-with-spl.bin u-boot-berry-safe-384.bin
+          # 检查文件是否生成
+          if [ -f "u-boot-sunxi-with-spl.bin" ]; then
+            echo "Build Success!"
+          else
+            echo "Error: File not found!"
+            exit 1
+          fi
 
-      # ========================================================
-      # 方案 B: 基于 M2 Ultra 修改 (备用方案)
-      # ========================================================
-      - name: Build Version B (Ultra Safe 360MHz)
-        run: |
-          make distclean
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- bananapi_m2_ultra_defconfig
-          
-          # Ultra 的默认频率更高，我们把它降到更低 360MHz
-          sed -i 's/CONFIG_DRAM_CLK=.*/CONFIG_DRAM_CLK=360/' .config
-          
-          # 确保开启 UMS
-          echo "CONFIG_CMD_USB_MASS_STORAGE=y" >> .config
-          echo "CONFIG_USB_MUSB_GADGET=y" >> .config
-          echo "CONFIG_USB_GADGET=y" >> .config
-          echo "CONFIG_USB_GADGET_DOWNLOAD=y" >> .config
-          echo "CONFIG_USB_MUSB_SUNXI=y" >> .config
-          
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
-          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
-          
-          mv u-boot-sunxi-with-spl.bin u-boot-ultra-safe-360.bin
-
-      - name: Upload Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: u-boot-safe-versions
-          path: |
-            u-boot-berry-safe-384.bin
-            u-boot-ultra-safe-360.bin
+          name: u-boot-safe-berry
+          path: u-boot-sunxi-with-spl.bin
